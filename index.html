@@ -2337,11 +2337,8 @@ renderHabits();
 updateHome();
 fetchWeather();
 loadSyncUI();
-if (syncSettings.token && !sessionStorage.getItem('aurum-synced')) {
+if (syncSettings.token) {
   manualSyncPull();
-}
-if (sessionStorage.getItem('aurum-synced')) {
-  sessionStorage.removeItem('aurum-synced'); // Flag wieder entfernen für nächsten echten Start
 }
 
 // ===== WEATHER JS =====
