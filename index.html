@@ -1472,12 +1472,19 @@ async function manualSyncPull() {
   const fileData = await githubApi('GET', 'data.json');
   if (fileData && fileData.content) {
     const cloudState = JSON.parse(atob(fileData.content.replace(/\s/g, '')));
-    state = cloudState;
-    localStorage.setItem('aurum-state', JSON.stringify(state));
-    if (status) status.textContent = "✓ Daten erfolgreich synchronisiert.";
-    setTimeout(() => location.reload(), 1000);
+    
+    // Nur aktualisieren und neu laden, wenn die Daten wirklich anders sind
+    if (JSON.stringify(cloudState) !== JSON.stringify(state)) {
+        state = cloudState;
+        localStorage.setItem('aurum-state', JSON.stringify(state));
+        if (status) status.textContent = "✓ Daten erfolgreich synchronisiert.";
+        sessionStorage.setItem('aurum-synced', 'true'); // Flag setzen gegen Endlosschleife
+        setTimeout(() => location.reload(), 1000);
+    } else {
+        if (status) status.textContent = "✓ Daten sind bereits aktuell.";
+    }
   } else {
-    if (status) status.textContent = "⚠ Keine Cloud-Datei gefunden oder Fehler. (Erster Upload nötig?)";
+    if (status) status.textContent = "⚠ Keine Cloud-Datei gefunden oder Fehler.";
   }
 }
 
@@ -2330,8 +2337,11 @@ renderHabits();
 updateHome();
 fetchWeather();
 loadSyncUI();
-if (syncSettings.token) {
+if (syncSettings.token && !sessionStorage.getItem('aurum-synced')) {
   manualSyncPull();
+}
+if (sessionStorage.getItem('aurum-synced')) {
+  sessionStorage.removeItem('aurum-synced'); // Flag wieder entfernen für nächsten echten Start
 }
 
 // ===== WEATHER JS =====
