@@ -1039,6 +1039,7 @@
   <button class="sidebar-link" onclick="switchTab('notes')">Notizen</button>
   <button class="sidebar-link" onclick="switchTab('habits')">Routinen</button>
   <button class="sidebar-link" onclick="switchTab('docs')">Dokumente</button>
+  <button class="sidebar-link" style="color: var(--gold); margin-top: 20px; border-top: 1px solid var(--border); padding-top: 20px;" onclick="switchTab('sync')">☁ Cloud Sync</button>
 </div>
 
 <main>
@@ -1297,6 +1298,47 @@
       <span class="empty-icon">🌱</span>
       <p>Noch keine Routinen definiert</p>
     </div>
+  <!-- ===== SYNC SETTINGS ===== -->
+  <div class="section" id="sync">
+    <div class="section-header">
+      <div class="section-title">
+        <small>Automatisierung</small>
+        GitHub Cloud Sync
+      </div>
+    </div>
+    
+    <div style="background: var(--black-2); border: 1px solid var(--border); padding: 32px; display: flex; flex-direction: column; gap: 24px; max-width: 800px;">
+      <p style="font-size: 14px; color: var(--text-dim); line-height: 1.6;">
+        Verbinde dein Dashboard mit GitHub, um deine Daten automatisch zwischen PC und Handy zu synchronisieren. 
+        Deine Daten werden verschlüsselt (Base64) in einer Datei namens <code style="color: var(--gold);">data.json</code> in deinem Repository gespeichert.
+      </p>
+
+      <div style="display: flex; flex-direction: column; gap: 12px;">
+        <label class="summary-label">GitHub Nutzername</label>
+        <input class="input-gold" type="text" id="sync-user" placeholder="z.B. Raman123">
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 12px;">
+        <label class="summary-label">Repository Name</label>
+        <input class="input-gold" type="text" id="sync-repo" placeholder="z.B. mein-dashboard">
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 12px;">
+        <label class="summary-label">Personal Access Token (classic)</label>
+        <input class="input-gold" type="password" id="sync-token" placeholder="ghp_xxxxxxxxxxxx">
+        <small style="color: var(--text-dim); font-size: 10px;">
+          Erstelle einen Token unter GitHub Settings > Developer Settings > Personal Access Tokens (Tokens classic) mit dem Recht 'repo'.
+        </small>
+      </div>
+
+      <div style="display: flex; gap: 12px; margin-top: 12px;">
+        <button class="btn-gold" onclick="saveSyncSettings()">Verbindung speichern</button>
+        <button class="btn-outline" onclick="manualSyncPull()">Daten jetzt von Cloud laden ↓</button>
+        <button class="btn-outline" onclick="manualSyncPush()">Daten jetzt hochladen ↑</button>
+      </div>
+
+      <div id="sync-status" style="font-size: 11px; color: var(--gold); margin-top: 8px;"></div>
+    </div>
   </div>
 
 </main>
@@ -1377,6 +1419,95 @@ let selectedDate = null;
 function save() { 
   localStorage.setItem('aurum-state', JSON.stringify(state)); 
   updateHome();
+  autoPush();
+}
+
+// ===== GITHUB SYNC LOGIC =====
+let syncSettings = JSON.parse(localStorage.getItem('aurum-sync-settings') || '{}');
+let lastPushTimeout = null;
+
+function saveSyncSettings() {
+  syncSettings = {
+    user: document.getElementById('sync-user').value.trim(),
+    repo: document.getElementById('sync-repo').value.trim(),
+    token: document.getElementById('sync-token').value.trim()
+  };
+  localStorage.setItem('aurum-sync-settings', JSON.stringify(syncSettings));
+  document.getElementById('sync-status').textContent = "✓ Einstellungen gespeichert. Starte ersten Abgleich...";
+  manualSyncPull();
+}
+
+function loadSyncUI() {
+  document.getElementById('sync-user').value = syncSettings.user || '';
+  document.getElementById('sync-repo').value = syncSettings.repo || '';
+  document.getElementById('sync-token').value = syncSettings.token || '';
+}
+
+async function githubApi(method, path, body = null) {
+  if (!syncSettings.token || !syncSettings.user || !syncSettings.repo) return null;
+  const url = `https://api.github.com/repos/${syncSettings.user}/${syncSettings.repo}/contents/${path}`;
+  const headers = {
+    'Authorization': `token ${syncSettings.token}`,
+    'Accept': 'application/vnd.github.v3+json'
+  };
+  const options = { method, headers };
+  if (body) options.body = JSON.stringify(body);
+  
+  try {
+    const res = await fetch(url, options);
+    if (res.status === 404 && method === 'GET') return null;
+    return await res.json();
+  } catch (e) {
+    console.error("Sync Error:", e);
+    return null;
+  }
+}
+
+async function manualSyncPull() {
+  const status = document.getElementById('sync-status');
+  if (status) status.textContent = "⌛ Lade Daten von GitHub...";
+  
+  const fileData = await githubApi('GET', 'data.json');
+  if (fileData && fileData.content) {
+    const cloudState = JSON.parse(atob(fileData.content.replace(/\s/g, '')));
+    state = cloudState;
+    localStorage.setItem('aurum-state', JSON.stringify(state));
+    if (status) status.textContent = "✓ Daten erfolgreich synchronisiert.";
+    setTimeout(() => location.reload(), 1000);
+  } else {
+    if (status) status.textContent = "⚠ Keine Cloud-Datei gefunden oder Fehler. (Erster Upload nötig?)";
+  }
+}
+
+async function manualSyncPush() {
+  const status = document.getElementById('sync-status');
+  if (status) status.textContent = "⌛ Lade Daten hoch...";
+  
+  // Get current SHA if exists
+  const fileData = await githubApi('GET', 'data.json');
+  const sha = fileData ? fileData.sha : null;
+  
+  const content = btoa(unescape(encodeURIComponent(JSON.stringify(state))));
+  const body = {
+    message: "Dashboard Sync: " + new Date().toLocaleString(),
+    content: content,
+    sha: sha
+  };
+  
+  const result = await githubApi('PUT', 'data.json', body);
+  if (result && (result.content || result.commit)) {
+    if (status) status.textContent = "✓ Erfolgreich hochgeladen.";
+  } else {
+    if (status) status.textContent = "✕ Fehler beim Hochladen.";
+  }
+}
+
+function autoPush() {
+  if (!syncSettings.token) return;
+  clearTimeout(lastPushTimeout);
+  lastPushTimeout = setTimeout(() => {
+    manualSyncPush();
+  }, 10000); // 10 Sekunden warten nach letzter Änderung, um API zu schonen
 }
 
 // ===== NAV =====
@@ -2196,6 +2327,10 @@ renderNotes();
 renderHabits();
 updateHome();
 fetchWeather();
+loadSyncUI();
+if (syncSettings.token) {
+  manualSyncPull();
+}
 
 // ===== WEATHER JS =====
 async function fetchWeather() {
